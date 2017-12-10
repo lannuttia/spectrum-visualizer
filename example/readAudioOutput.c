@@ -100,11 +100,18 @@ int main(int argc, char *argv[])
     {0, 0, 0, 0}
   };
 
-  uint8_t              errval        = 0;
-  uint32_t             sampRateHz    = 44100;
+  uint8_t              errval         = 0;
+  uint32_t             sampRateHz     = 44100;
+  uint32_t             channels       = 2;
+  unsigned int         numChannels    = 0;
+  uint32_t             currSampRate   = 0;
+  uint8_t              sampSize       = 0;
+  char                *pBuff          = NULL;
+  uint32_t             buffSize       = 0;
   snd_pcm_t           *pCaptureHandle = NULL;
   snd_pcm_hw_params_t *pHwParams      = NULL;
-  snd_pcm_format_t     format        = SND_PCM_FORMAT_UNKNOWN;
+  snd_pcm_format_t     format         = SND_PCM_FORMAT_UNKNOWN;
+  snd_pcm_uframes_t    frames;
 
   while(1)
   {
@@ -140,25 +147,224 @@ int main(int argc, char *argv[])
     }
   }
 
+  if( format == SND_PCM_FORMAT_UNKNOWN )
+  {
+    printf("FATAL ERR: %s:%d "
+           "Data format was not set\n",
+           __FILE__,__LINE__);
+    help();
+    goto exiterror;
+  }
+  else
+  {
+    switch(format)
+    {
+      case SND_PCM_FORMAT_S8:
+      case SND_PCM_FORMAT_U8:
+        sampSize = 1;
+        break;
+
+      case SND_PCM_FORMAT_S16_LE:
+      case SND_PCM_FORMAT_S16_BE:
+      case SND_PCM_FORMAT_U16_LE:
+      case SND_PCM_FORMAT_U16_BE:
+        sampSize = 2;
+        break;
+
+      case SND_PCM_FORMAT_S24_LE:
+      case SND_PCM_FORMAT_S24_BE:
+      case SND_PCM_FORMAT_U24_LE:
+      case SND_PCM_FORMAT_U24_BE:
+        sampSize = 3;
+        break;
+
+      case SND_PCM_FORMAT_S32_LE:
+      case SND_PCM_FORMAT_S32_BE:
+      case SND_PCM_FORMAT_U32_LE:
+      case SND_PCM_FORMAT_U32_BE:
+        sampSize = 4;
+        break;
+
+      case SND_PCM_FORMAT_FLOAT_LE:
+      case SND_PCM_FORMAT_FLOAT_BE:
+        sampSize = sizeof(float);
+        break;
+
+      case SND_PCM_FORMAT_FLOAT64_LE:
+      case SND_PCM_FORMAT_FLOAT64_BE:
+        sampSize = 8;
+        break;
+
+      case SND_PCM_FORMAT_IEC958_SUBFRAME_LE:
+      case SND_PCM_FORMAT_IEC958_SUBFRAME_BE:
+        sampSize = 4;
+        break;
+
+      default:
+        printf("Unsupported format: %i\n", format);
+        errval = 1;
+        goto exiterror;
+    }
+  }
+
   errval = snd_pcm_open(&pCaptureHandle,PCM_DEVICE,SND_PCM_STREAM_CAPTURE,0);
   if( errval )
   {
-    printf("Failed to open PCM device %s\n", PCM_DEVICE);
+    printf("FATAL ERR: %s:%d "
+           "Failed to open PCM device: %s\n",
+           __FILE__,__LINE__,snd_strerror(errval));
     goto exiterror;
   }
 
-  /*--------------------------------------------------------------------------*
-   * TODO: Fill stuff in here
-   *--------------------------------------------------------------------------*/
+  /* Allocating a hardware parameters object */
+  errval = snd_pcm_hw_params_malloc(&pHwParams);
+  if( errval )
+  {
+    printf("FATAL ERR: %s:%d "
+           "Failed to allocate hardware parameters object: %s\n",
+           __FILE__,__LINE__,snd_strerror(errval));
+    goto exiterror;
+  }
+
+  /* Filling the hardware parameters object with default values */
+  errval = snd_pcm_hw_params_any(pCaptureHandle, pHwParams);
+  if( errval )
+  {
+    printf("ADVISORY: %s:%d "
+           "Failed to fill hardware parameters object with default values: %s\n",
+           __FILE__,__LINE__,snd_strerror(errval));
+  }
+
+  errval = snd_pcm_hw_params_set_access(pCaptureHandle,pHwParams,
+                                        SND_PCM_ACCESS_RW_INTERLEAVED);
+  if( errval )
+  {
+    printf("ADVISORY: %s:%d "
+           "Failed to set interleaved mode: %s\n",
+           __FILE__,__LINE__,snd_strerror(errval));
+  }
+
+  errval = snd_pcm_hw_params_set_format(pCaptureHandle,pHwParams,
+                                        format);
+  if( errval )
+  {
+    printf("ADVISORY: %s:%d "
+           "Failed to set format: %s\n",
+           __FILE__,__LINE__,snd_strerror(errval));
+  }
+
+  errval = snd_pcm_hw_params_set_channels(pCaptureHandle,pHwParams,
+                                          channels);
+  if( errval )
+  {
+    printf("ADVISORY: %s:%d "
+           "Failed to set channels: %s\n",
+           __FILE__,__LINE__,snd_strerror(errval));
+  }
+
+  errval = snd_pcm_hw_params_set_rate(pCaptureHandle,pHwParams,
+                                      sampRateHz,0);
+  if( errval )
+  {
+    printf("ADVISORY: %s:%d "
+           "Failed to set channels: %s\n",
+           __FILE__,__LINE__,snd_strerror(errval));
+  }
+
+  errval = snd_pcm_hw_params_get_channels(pHwParams, &numChannels);
+  if( errval )
+  {
+    printf("ADVISORY: %s:%d "
+           "Failed to get the number of channels: %s\n",
+           __FILE__,__LINE__,snd_strerror(errval));
+  }
+
+  errval = snd_pcm_hw_params_get_rate(pHwParams,&currSampRate,0);
+  if( errval )
+  {
+    printf("ADVISORY: %s:%d "
+           "Failed get the sample rate: %s\n",
+           __FILE__,__LINE__,snd_strerror(errval));
+  }
+
+  if( verbose )
+  {
+    printf("PCM name: '%s'\n", snd_pcm_name(pCaptureHandle));
+    printf("PCM state: '%s'\n", snd_pcm_state_name(snd_pcm_state(pCaptureHandle)));
+    switch(numChannels)
+    {
+      case 1:
+        printf("Channel: mono\n");
+        break;
+      case 2:
+        printf("Channel: stereo\n");
+        break;
+      default:
+        printf("Channel: unknown\n");
+        break;
+    }
+    printf("rate: %d bps\n",currSampRate);
+  }
+
+  errval = snd_pcm_hw_params_get_rate(pHwParams,&currSampRate,0);
+  if( errval )
+  {
+    printf("ADVISORY: %s:%d "
+           "Failed get the sample rate: %s\n",
+           __FILE__,__LINE__,snd_strerror(errval));
+  }
+
+  errval = snd_pcm_hw_params_get_period_size(pHwParams, &frames, 0);
+
+  buffSize = frames * channels * sampSize;
+  pBuff = (char*)malloc(buffSize);
+
+  printf("frames: %d\n", frames);
+
+  for( uint64_t idx = 0; idx < 5000000; idx++ )
+  {
+    errval = snd_pcm_readi(pCaptureHandle, pBuff, frames);
+    if( errval < 0 )
+    {
+      if( errval == EBADFD )
+      {
+        printf("PCM is not in the right state\n");
+      }
+      else if( errval == EPIPE )
+      {
+        printf("an overrun occurred\n");
+      }
+      else if( errval == ESTRPIPE )
+      {
+        printf("a suspend event occurred\n");
+      }
+      else
+      {
+        printf("an unexpected error code was recieved\n");
+      }
+    }
+    else
+    {
+      printf("Read %ld bytes\n", errval);
+    }
+  }
 
   errval = snd_pcm_close(pCaptureHandle);
   if( errval )
   {
-    printf("Failed to close PCM device\n");
+    printf("FATAL ERR: %s:%d "
+           "Failed to close PCM device: %s\n",
+           __FILE__,__LINE__,snd_strerror(errval));
     goto exiterror;
   }
 
   exiterror:
+    if( pHwParams )
+      snd_pcm_hw_params_free( pHwParams );
+
+    if( pBuff )
+      free(pBuff);
+
     return errval;
 }
 
