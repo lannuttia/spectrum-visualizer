@@ -69,5 +69,8 @@ int main (int argc, char *argv[])
     if( pFile )
       fclose(pFile);
 
+    if( buf )
+      free(buf);
+
     return errval;
 }
