@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <errno.h>
 #include <string.h>
 
@@ -22,30 +23,16 @@ int main (int argc, char *argv[])
   uint32_t bufSize = 0;
   void *leftBuf = NULL;
   void *rightBuf = NULL;
-  FILE *pFileStereo = NULL;
-  FILE *pFileLeft = NULL;
-  FILE *pFileRight = NULL;
 
-  pFileStereo = fopen("/home/anthony/pulseCapture_Stereo.raw", "wb");
-  if( !pFileStereo )
+  static volatile int keepRunning = 1;
+
+  void sigintHandler()
   {
-    fprintf(stderr,__FILE__": fopen() for stereo failed: %s\n",strerror(errno));
-    goto exiterror;
+    printf("Catching and handling ctrl-c\n");
+    keepRunning = 0;
   }
 
-  pFileLeft = fopen("/home/anthony/pulseCapture_Left.raw", "wb");
-  if( !pFileLeft )
-  {
-    fprintf(stderr,__FILE__": fopen() for left failed: %s\n",strerror(errno));
-    goto exiterror;
-  }
-
-  pFileRight = fopen("/home/anthony/pulseCapture_Right.raw", "wb");
-  if( !pFileRight )
-  {
-    fprintf(stderr,__FILE__": fopen() for right failed: %s\n",strerror(errno));
-    goto exiterror;
-  }
+  signal(SIGINT, sigintHandler);
 
   // Allocate buffer large enough to hold 
   // 1 second worth of raw pcm data
@@ -71,7 +58,7 @@ int main (int argc, char *argv[])
     goto exiterror;
   }
 
-  for( int idx = 0; idx < 1 ; idx++ )
+  while(keepRunning)
   {
     retval = pa_simple_read(pHandle,buf,bufSize,&errval);
     if( retval )
@@ -81,38 +68,11 @@ int main (int argc, char *argv[])
     }
 
     deinterleaveRawStereo( buf, bufSize, sizeof(int16_t), leftBuf, rightBuf );
-
-    retval = fwrite(buf,bufSize,1,pFileStereo);
-    if( retval != bufSize )
-    {
-      fprintf(stdout,"Failed to write entire buffer to file\n");
-    }
-
-    retval = fwrite(leftBuf,(bufSize >> 1),1,pFileLeft);
-    if( retval != (bufSize >> 1) )
-    {
-      fprintf(stdout,"Failed to write entire buffer to file\n");
-    }
-
-    retval = fwrite(rightBuf,(bufSize >> 1),1,pFileRight);
-    if( retval != (bufSize >> 1) )
-    {
-      fprintf(stdout,"Failed to write entire buffer to file\n");
-    }
   }
 
   exiterror:
     if( pHandle )
       pa_simple_free(pHandle);
-
-    if( pFileStereo )
-      fclose(pFileStereo);
-
-    if( pFileLeft )
-      fclose(pFileLeft);
-
-    if( pFileRight )
-      fclose(pFileRight);
 
     if( buf )
       free(buf);
