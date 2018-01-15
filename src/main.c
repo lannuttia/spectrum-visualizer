@@ -6,11 +6,15 @@
 
 #include <pulse/simple.h>
 #include <pulse/error.h>
+#include <fftw3.h>
 
 #include "deinterleave.h"
 
+
 int main (int argc, char *argv[])
 {
+  static volatile int keepRunning = 1;
+
   static const pa_sample_spec sampSpec = {
     .format = PA_SAMPLE_S16LE,
     .rate = 44100,
@@ -24,7 +28,10 @@ int main (int argc, char *argv[])
   void *leftBuf = NULL;
   void *rightBuf = NULL;
 
-  static volatile int keepRunning = 1;
+  fftw_complex *pFftwLeftBuf = {NULL}; /* Left Output */
+  fftw_complex *pFftwRightBuf = {NULL}; /* Right Output */
+  fftw_plan fftwLeftPlan = {0}; /* Left Plan */
+  fftw_plan fftwRightPlan = {0}; /* Right Plan */
 
   void sigintHandler()
   {
@@ -42,6 +49,9 @@ int main (int argc, char *argv[])
   //Allocate buffers for channel data
   leftBuf = malloc(bufSize/sampSpec.channels);
   rightBuf = malloc(bufSize/sampSpec.channels);
+
+  pFftwLeftBuf = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * ((bufSize/sampSpec.channels) + 1));
+  pFftwRightBuf = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * ((bufSize/sampSpec.channels) + 1));
 
   pHandle = pa_simple_new(NULL,
                           argv[0],
@@ -68,6 +78,12 @@ int main (int argc, char *argv[])
     }
 
     deinterleaveRawStereo( buf, bufSize, sizeof(int16_t), leftBuf, rightBuf );
+
+    fftwLeftPlan = fftw_plan_dft_r2c_1d(bufSize/sampSpec.channels, leftBuf, pFftwLeftBuf, FFTW_ESTIMATE);
+    fftwRightPlan = fftw_plan_dft_r2c_1d(bufSize/sampSpec.channels, rightBuf, pFftwRightBuf, FFTW_ESTIMATE);
+
+    fftw_execute(fftwLeftPlan);
+    fftw_execute(fftwRightPlan);
   }
 
   exiterror:
@@ -82,6 +98,15 @@ int main (int argc, char *argv[])
 
     if( rightBuf )
       free(rightBuf);
+
+    fftw_destroy_plan(fftwLeftPlan);
+    fftw_destroy_plan(fftwRightPlan);
+
+    if( pFftwLeftBuf )
+      fftw_free(pFftwLeftBuf);
+
+    if( pFftwRightBuf )
+      fftw_free(pFftwRightBuf);
 
     return errval;
 }
